@@ -3,12 +3,14 @@
 //
 #include <LyjPlayer.h>
 #include <logger.h>
+#include <ThreadPool.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 #include <libavcodec/avcodec.h>
 #include <libavutil/imgutils.h>
+#include "libavcodec/jni.h"
 #ifdef __cplusplus
 }
 #endif
@@ -19,12 +21,13 @@ LyjPlayer::~LyjPlayer() {
 
 }
 
-int LyjPlayer::init(ANativeWindow *window) {
-    this->window = window;
+int LyjPlayer::init() {
+    av_jni_set_java_vm(vm, 0);
     return 0;
 }
 
 void LyjPlayer::startPlay(const char *url) {
+    ThreadPool *pool = new ThreadPool(8);
     this->url = url;
     playing = true;
     // 解码线程
@@ -37,11 +40,12 @@ void LyjPlayer::startPlay(const char *url) {
         int ret = vm->AttachCurrentThread(&env, nullptr);
         avformat_network_init();
         formatContext = avformat_alloc_context();
+        //AVInputFormat *iformat = av_find_input_format("h264");
         // 打开文件
         LOGE("正在连接");
         ret = avformat_open_input(&formatContext, this->url, nullptr, nullptr);
         if (ret < 0) {
-            LOGE("打开文件失败 %s", av_err2str(ret));
+            LOGE("打开文件失败code:%d msg:%s", ret, av_err2str(ret));
             callbackError(env, PlayError::CONNECT_TIMEOUT);
             vm->DetachCurrentThread();
             stopPlay();
@@ -52,8 +56,8 @@ void LyjPlayer::startPlay(const char *url) {
         ret = avformat_find_stream_info(formatContext, nullptr);
         if (ret < 0) {
             LOGE("查找流失败 %s", av_err2str(ret));
-            vm->DetachCurrentThread();
             callbackError(env, PlayError::ERROR_STREAM);
+            vm->DetachCurrentThread();
             stopPlay();
             return ret;
         }
@@ -80,10 +84,10 @@ void LyjPlayer::startPlay(const char *url) {
         // h264硬解
         if (codecId == AV_CODEC_ID_H264) {
             codec = avcodec_find_decoder_by_name("h264_mediacodec");
-            LOGE("can not find mediacodec");
-        }
-        if (codec == nullptr) {
-            codec = avcodec_find_decoder(codecId);
+            if (codec == nullptr) {
+                LOGE("can not find mediacodec");
+                codec = avcodec_find_decoder(codecId);
+            }
         }
         if (codec == nullptr) {
             LOGE("找不到解码器");
@@ -97,7 +101,7 @@ void LyjPlayer::startPlay(const char *url) {
         avcodec_parameters_to_context(codecContext, formatContext->streams[index]->codecpar);
         ret = avcodec_open2(codecContext, codec, nullptr);
         if (ret < 0) {
-            LOGE("初始化解码器失败");
+            LOGE("初始化解码器失败:%s", av_err2str(ret));
             callbackError(env, PlayError::UNKNOW);
             vm->DetachCurrentThread();
             stopPlay();
@@ -124,7 +128,6 @@ void LyjPlayer::startPlay(const char *url) {
             LOGE("初始化播放窗口失败");
             return -1;
         }
-
         while (playing) {
             // 读流放入队列
             ret = av_read_frame(formatContext, packet);
@@ -151,13 +154,16 @@ int LyjPlayer::decodeVideo() {
     while (playing) {
         AVPacket *packet = queue.pop();
         ret = avcodec_send_packet(codecContext, packet);
-        if (ret < 0) {
-            LOGE("avcodec_send_packet error %s", av_err2str(ret));
+        if (ret == AVERROR(EAGAIN)) {
+            ret = 0;
+        } else if (ret < 0) {
+            LOGE("avcodec_send_packet err code: %d, msg:%s", ret, av_err2str(ret));
             av_packet_free(&packet);
             vm->DetachCurrentThread();
             stopPlay();
             return -1;
         }
+        LOGE("send a packet");
         while (ret >= 0) {
             ret = avcodec_receive_frame(codecContext, temp);
             if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
@@ -169,6 +175,7 @@ int LyjPlayer::decodeVideo() {
                 stopPlay();
                 return -1;
             }
+            LOGE("receive a frame");
             sws_scale(sws_context, temp->data, temp->linesize, 0, codecContext->height,
                       frame->data, frame->linesize);
             ret = ANativeWindow_lock(window, &windowBuffer, nullptr);
@@ -182,11 +189,12 @@ int LyjPlayer::decodeVideo() {
             } else {
                 //逐行复制
                 uint8_t *bufferBits = (uint8_t *) windowBuffer.bits;
+                // 四通道所以*4
                 for (int h = 0; h < height; h++) {
                     memcpy(bufferBits + h * windowBuffer.stride * 4,
                            buffer + h * frame->linesize[0],
                            static_cast<size_t>(frame->linesize[0]));
-                    LOGI("复制%d到%d", h * windowBuffer.stride * 4, h * frame->linesize[0]);
+                   // LOGI("复制%d到%d", h * windowBuffer.stride * 4, h * frame->linesize[0]);
                 }
                 ANativeWindow_unlockAndPost(window);
             }

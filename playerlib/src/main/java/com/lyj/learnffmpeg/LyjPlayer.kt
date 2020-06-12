@@ -21,7 +21,13 @@ class LyjPlayer {
 
     }
 
-    external fun initPlayer(surface: Surface)
+    init {
+        initPlayer()
+    }
+
+    external fun initPlayer()
+
+    external fun setSurface(surface: Surface)
 
     external fun setVideoCallBack(callback: VideoCallBack)
 

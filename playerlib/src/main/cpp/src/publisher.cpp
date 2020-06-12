@@ -36,6 +36,7 @@ int Publisher::startPublish(const char *path, int width, int height, int orienta
     this->path = path;
     this->width = orientation % 180 == 0 ? width:height;
     this->height = orientation % 180 == 0 ? height:width;
+    LOGE("publish width:%d, height:%d", this->width, this->height);
     this->orientation = orientation;
     pool = new ThreadPool(8);
     running = true;
@@ -244,8 +245,10 @@ int Publisher::pushData(unsigned char *buffer) {
 int Publisher::encodeFrame(AVFrame *frame) {
     // 编码一帧数据
     int ret = avcodec_send_frame(codecContext, frame);
-    if (ret != 0) {
-        LOGE("encode error ", av_err2str(ret));
+    if (ret == AVERROR(EAGAIN)) {
+        ret = 0;
+    } else if (ret != 0) {
+        LOGE("encode error code: %d, msg:%s", ret, av_err2str(ret));
         return -1;
     }
     while (ret >= 0) {

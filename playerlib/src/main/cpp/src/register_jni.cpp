@@ -121,16 +121,25 @@ const string getKey(JNIEnv *env, jobject obj) {
     return string(env->GetStringUTFChars(jstr, nullptr));
 }
 
-int player_init_play(JNIEnv *env, jobject obj, jobject surface) {
+void player_init_play(JNIEnv *env, jobject obj) {
     string key = getKey(env, obj);
     LyjPlayer *player = new LyjPlayer();
     env->GetJavaVM(&player->vm);
     player_map[key] = player;
-    ANativeWindow *window = ANativeWindow_fromSurface(env, surface);
-    if (!window) {
-        LOGE("window null");
+    player->init();
+}
+
+void player_set_surface(JNIEnv *env, jobject obj, jobject surface) {
+    string key = getKey(env, obj);
+    LyjPlayer *player = player_map[key];
+    if (player) {
+        ANativeWindow *window = ANativeWindow_fromSurface(env, surface);
+        if (!window) {
+            LOGE("window null");
+        } else {
+            player->window = window;
+        }
     }
-    return player->init(window);
 }
 
 /**
@@ -212,7 +221,8 @@ JNINativeMethod publisher_methods[] = {
 
 JNINativeMethod player_methods[] = {
         // 参数类型jstring
-        {"initPlayer",       "(Landroid/view/Surface;)V",              (void *) player_init_play},
+        {"initPlayer",       "()V",                                    (void *) player_init_play},
+        {"setSurface",       "(Landroid/view/Surface;)V",              (void *) player_set_surface},
         {"setVideoCallBack", "(Lcom/lyj/learnffmpeg/VideoCallBack;)V", (void *) player_set_callback},
         {"startPlay",        "(Ljava/lang/String;)I",                  (void *) player_start_play},
         {"stopPlay",         "()I",                                    (void *) player_stop_play},

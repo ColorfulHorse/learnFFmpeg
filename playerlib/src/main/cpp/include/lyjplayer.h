@@ -43,7 +43,6 @@ private:
     AVPacket *packet = nullptr;
     SwsContext *sws_context = nullptr;
     uint8_t *buffer = nullptr;
-    ANativeWindow *window = nullptr;
     ANativeWindow_Buffer windowBuffer;
     thread task, task_decode;
     // 记录帧编号
@@ -60,10 +59,11 @@ private:
 public:
     JavaVM *vm = nullptr;
     jobject callback = nullptr;
+    ANativeWindow *window = nullptr;
 
     LyjPlayer();
 
-    int init(ANativeWindow *window);
+    int init();
 
     void startPlay(const char *url);
 

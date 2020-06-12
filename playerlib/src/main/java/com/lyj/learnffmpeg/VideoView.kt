@@ -25,7 +25,6 @@ class VideoView : RelativeLayout, SurfaceHolder.Callback {
     init {
         View.inflate(context, R.layout.video_view, this)
         surfaceView.holder.addCallback(this)
-        //player.initPlayer(surfaceView.holder.surface)
     }
 
     override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -37,10 +36,7 @@ class VideoView : RelativeLayout, SurfaceHolder.Callback {
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
-        if (!created) {
-            created = true
-            player.initPlayer(surfaceView.holder.surface)
-        }
+        player.setSurface(holder.surface)
     }
 
     fun startPlay(url: String) {
