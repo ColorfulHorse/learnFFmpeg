@@ -87,6 +87,8 @@ void LyjPlayer::startPlay(const char *url) {
             if (codec == nullptr) {
                 LOGE("can not find mediacodec");
                 codec = avcodec_find_decoder(codecId);
+            } else {
+                LOGE("使用硬解");
             }
         }
         if (codec == nullptr) {

@@ -137,12 +137,11 @@ int Publisher::initPublish(JNIEnv *env) {
     codecContext->framerate = AVRational{fps, 1};
     // codecContext->thread_count = 4;
 
-    AVDictionary *param = nullptr;
-    av_dict_set(&param, "rotate", "90", 0);
+    av_dict_set(&codec_dict, "timeout", "6000", 0);
     if (codecContext->codec_id == AV_CODEC_ID_H264) {
         // 编码速度和质量的平衡
         // "ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo"
-        av_dict_set(&param, "preset", "veryfast", 0);
+        av_dict_set(&codec_dict, "preset", "veryfast", 0);
         // 主要配合视频类型和视觉优化的参数
         // film：  电影、真人类型；
         // animation：  动画；
@@ -152,20 +151,19 @@ int Publisher::initPublish(JNIEnv *env) {
         // ssim：      为提高ssim做了优化的参数；
         // fastdecode： 可以快速解码的参数；
         // zerolatency：零延迟，用在需要非常低的延迟的情况下，比如电视电话会议的编码。
-        av_dict_set(&param, "tune", "zerolatency", 0);
+        av_dict_set(&codec_dict, "tune", "zerolatency", 0);
     }
 
     if (codecContext->codec_id == AV_CODEC_ID_H265) {
-        av_dict_set(&param, "preset", "ultrafast", 0);
-        av_dict_set(&param, "tune", "zero-latency", 0);
+        av_dict_set(&codec_dict, "preset", "ultrafast", 0);
+        av_dict_set(&codec_dict, "tune", "zero-latency", 0);
     }
 
     // 打印封装格式信息
     av_dump_format(formatContext, 0, path, 1);
 
-
     // 初始化编码器
-    if (avcodec_open2(codecContext, codec, &param) < 0) {
+    if (avcodec_open2(codecContext, codec, &codec_dict) < 0) {
         return -1;
     }
     //new一个流并挂到fmt_ctx名下，调用avformat_free_context时会释放该流
@@ -176,7 +174,7 @@ int Publisher::initPublish(JNIEnv *env) {
     // 复制解码配置到码流配置
     avcodec_parameters_from_context(stream->codecpar, codecContext);
     // 打开输出流
-    ret = avio_open(&formatContext->pb, path, AVIO_FLAG_READ_WRITE);
+    ret = avio_open(&formatContext->pb, path, AVIO_FLAG_WRITE);
     if (ret < 0) {
         char *err = av_err2str(ret);
         LOGE("打开输出流失败, err:%s", err);
@@ -219,7 +217,9 @@ int Publisher::destroyPublish() {
         av_free(pic_buf);
         pic_buf = nullptr;
     }
-
+    if (codec_dict) {
+        av_dict_free(&codec_dict);
+    }
     if (formatContext) {
         avio_close(formatContext->pb);
         avformat_free_context(formatContext);
