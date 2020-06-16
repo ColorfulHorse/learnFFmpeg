@@ -136,8 +136,6 @@ int Publisher::initPublish(JNIEnv *env) {
     codecContext->time_base = AVRational{1, fps};
     codecContext->framerate = AVRational{fps, 1};
     // codecContext->thread_count = 4;
-
-    av_dict_set(&codec_dict, "timeout", "6000", 0);
     if (codecContext->codec_id == AV_CODEC_ID_H264) {
         // 编码速度和质量的平衡
         // "ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo"
