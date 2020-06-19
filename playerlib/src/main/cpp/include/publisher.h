@@ -53,6 +53,8 @@ private:
     AVStream *stream = nullptr;
     thread worker;
 
+    void encodeRun();
+
     void callbackState(JNIEnv *env, PublishState state);
 
     void callbackError(JNIEnv *env, PublishError error);

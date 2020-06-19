@@ -50,56 +50,75 @@ class PreviewActivity : AppCompatActivity() {
     private var deviceOrientation = 0
     private lateinit var mOrientationListener: OrientationEventListener
     private val imageListener = { reader: ImageReader ->
-        //val res = backgroundHandler?.post {
-            val image = reader.acquireNextImage()
-            if (image != null) {
-                val time = measureTimeMillis {
-                    // yuv420三通道byte[]
-                    val yChannel = image.planes[0]
-                    val uChannel = image.planes[1]
-                    val vChannel = image.planes[2]
-                    // 内存对齐导致多余的数据填充
-                    val padding = yChannel.rowStride - image.width
-                    val capacity = uChannel.buffer.capacity()
-                    //val uvSize = (capacity + uChannel.pixelStride - 1) / uChannel.pixelStride
-                    val ySize = image.width*image.height
-                    val uvSize = ySize/4
-                    val yuvSize = (image.width * image.height * 3) / 2
-                    val yuvBuffer = ByteArray(yuvSize)
-                    var pos = 0
-                    if (padding == 0) {
-                        pos = ySize
-                        yChannel.buffer.get(yuvBuffer, 0, ySize)
-                    }else {
-                        var offset = 0
-                        for (row in 0 until image.height) {
-                            yChannel.buffer.position(offset)
-                            yChannel.buffer.get(yuvBuffer, offset, image.width)
-                            offset += yChannel.rowStride
-                            pos+=image.width
-                        }
-                    }
+        val image = reader.acquireNextImage()
+        if (image != null) {
+//            listOf(
+//                image.planes[0],
+//                image.planes[1],
+//                image.planes[2]
+//            ).forEachIndexed { index, plane ->
+//                Log.e(
+//                    TAG, """
+//
+//                    index:$index
+//                    width:${image.width}
+//                    height:${image.height}
+//                    rowStride:${plane.rowStride}
+//                    pixelStride:${plane.pixelStride}
+//                    bufferSize:${plane.buffer.capacity()}
+//                    """
+//                )
+//            }
+            // y u v三通道
+            val yBuffer = image.planes[0].buffer
 
-                    var i = 0
-                    val uvLen = uChannel.buffer.remaining()
-                    val stride = uChannel.pixelStride
-                    while (i < uvLen) {
-                        yuvBuffer[pos] = uChannel.buffer[i]
-                        yuvBuffer[pos+uvSize] = vChannel.buffer[i]
-                        i += stride
-                        pos++
-                        if (padding == 0) continue
+            val uBuffer = image.planes[1].buffer
+            // 两像素之间u分量的间隔，yuv420中uv为1
+            val uStride = image.planes[1].pixelStride
 
-                        val rowIndex = i % uChannel.rowStride
-                        if (rowIndex >= image.width) {
-                            i += padding
-                        }
-                    }
-                    publisher.publishData(yuvBuffer)
-                    image.close()
+            val vBuffer = image.planes[2].buffer
+
+            val uvSize = image.width * image.height / 4
+            // yuvi420: Y:U:V = 4:1:1 = YYYYUV
+            val buffer = ByteArray(image.width * image.height * 3 / 2)
+            // 每一行的实际数据长度，可能因为内存对齐大于图像width
+            val rowStride = image.planes[0].rowStride
+            val padding = rowStride - image.width
+            var pos = 0
+            // 将y buffer拼进去
+            if (padding == 0) {
+                pos = yBuffer.remaining()
+                yBuffer.get(buffer, 0, pos)
+            } else {
+                var yBufferPos = 0
+                for (row in 0 until image.height) {
+                    yBuffer.position(yBufferPos)
+                    yBuffer.get(buffer, pos, image.width)
+                    // 忽略行末冗余数据，偏移到下一行的位置
+                    yBufferPos += rowStride
+                    pos += image.width
                 }
-                //Log.e(TAG, "transform time: $time =============")
-            //}
+            }
+
+            var i = 0
+
+            val uRemaining = uBuffer.remaining()
+            while (i < uRemaining) {
+                // 循环u v buffer，隔一个取一个
+                buffer[pos] = uBuffer[i]
+                buffer[pos+uvSize] = vBuffer[i]
+                pos++
+                i += uStride
+
+                if (padding == 0) continue
+                // 并跳过每一行冗余数据
+                val rowLen = i % rowStride
+                if (rowLen >= image.width) {
+                    i += padding
+                }
+            }
+            publisher.publishData(buffer)
+            image.close()
         }
     }
 
@@ -115,15 +134,27 @@ class PreviewActivity : AppCompatActivity() {
         }
         publisher.setPublishListener(object : PublishCallBack {
             override fun onState(state: Int) {
-                when(state) {
-                    Publisher.STATE_CONNECTED -> Toast.makeText(this@PreviewActivity, "连接服务器成功", Toast.LENGTH_SHORT).show()
-                    Publisher.STATE_START -> Toast.makeText(this@PreviewActivity, "推流成功", Toast.LENGTH_SHORT).show()
+                when (state) {
+                    Publisher.STATE_CONNECTED -> Toast.makeText(
+                        this@PreviewActivity,
+                        "连接服务器成功",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    Publisher.STATE_START -> Toast.makeText(
+                        this@PreviewActivity,
+                        "推流成功",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
 
             override fun onError(code: Int) {
-                when(code) {
-                    Publisher.CONNECT_ERROR -> Toast.makeText(this@PreviewActivity, "连接服务器失败", Toast.LENGTH_SHORT).show()
+                when (code) {
+                    Publisher.CONNECT_ERROR -> Toast.makeText(
+                        this@PreviewActivity,
+                        "连接服务器失败",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             }
 
@@ -131,9 +162,14 @@ class PreviewActivity : AppCompatActivity() {
         start.setOnClickListener {
             // 开始推流
             mCameraInfo?.let {
-                val rotation = it.get(CameraCharacteristics.SENSOR_ORIENTATION)?:0
+                val rotation = it.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
                 previewDataSize?.let { size ->
-                    publisher.startPublish("rtmp://149.28.73.52:1935/live/test", size.width, size.height, rotation)
+                    publisher.startPublish(
+                        "rtmp://149.28.73.52:1935/live/test",
+                        size.width,
+                        size.height,
+                        rotation
+                    )
                 }
             }
         }
@@ -186,7 +222,11 @@ class PreviewActivity : AppCompatActivity() {
             openBackCamera()
         } else {
             preview.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
+                override fun onSurfaceTextureSizeChanged(
+                    surface: SurfaceTexture,
+                    width: Int,
+                    height: Int
+                ) {
                     mSurfaceTexture = surface
                 }
 
@@ -199,7 +239,11 @@ class PreviewActivity : AppCompatActivity() {
                     return true
                 }
 
-                override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
+                override fun onSurfaceTextureAvailable(
+                    surface: SurfaceTexture,
+                    width: Int,
+                    height: Int
+                ) {
                     mSurfaceTexture = surface
                     openBackCamera()
                 }
@@ -254,10 +298,8 @@ class PreviewActivity : AppCompatActivity() {
             //}
         }
         if (cameraId.isNotBlank()) {
-            Log.e(TAG, "cameraId: $cameraId")
             manager.openCamera(cameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) {
-                    Log.e("onOpened", "onOpened==============")
                     mCamera = camera
                     createSession()
                 }
@@ -293,7 +335,7 @@ class PreviewActivity : AppCompatActivity() {
     private fun createSession() {
         mCamera?.let { camera ->
             createOutputs()
-            val outputs = listOf(previewDataSurface, previewSurface)
+            val outputs = listOf(previewSurface, previewDataSurface)
             camera.createCaptureSession(
                 outputs,
                 object : CameraCaptureSession.StateCallback() {
@@ -316,7 +358,6 @@ class PreviewActivity : AppCompatActivity() {
                 backgroundHandler
             )
         }
-
     }
 
     private fun createOutputs() {
@@ -324,14 +365,26 @@ class PreviewActivity : AppCompatActivity() {
             val map = info[CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP]
             map?.let { config ->
                 val previewSize =
-                    getOptimalSize(config.getOutputSizes(SurfaceTexture::class.java), previewWidth, previewHeight)
+                    getOptimalSize(
+                        config.getOutputSizes(SurfaceTexture::class.java),
+                        previewWidth,
+                        previewHeight
+                    )
                 // 获取camera流的分辨率
                 val previewDataSize =
                     getOptimalSize(config.getOutputSizes(SurfaceTexture::class.java), 480, 640)
-                Log.e(TAG, "preview data width:${previewDataSize.width}  height:${previewDataSize.height}")
+                Log.e(
+                    TAG,
+                    "preview data width:${previewDataSize.width}  height:${previewDataSize.height}"
+                )
                 this.previewDataSize = previewDataSize;
                 val previewReader =
-                    ImageReader.newInstance(previewDataSize.width, previewDataSize.height, ImageFormat.YUV_420_888, 3)
+                    ImageReader.newInstance(
+                        previewDataSize.width,
+                        previewDataSize.height,
+                        ImageFormat.YUV_420_888,
+                        3
+                    )
                 mPreviewReader = previewReader
                 previewReader.setOnImageAvailableListener(imageListener, backgroundHandler)
                 previewDataSurface = previewReader.surface
@@ -353,14 +406,14 @@ class PreviewActivity : AppCompatActivity() {
     private fun startPreview() {
         mCamera?.let { camera ->
             mSession?.let { session ->
-                val builder =
-                    camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                val builder = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
                 previewSurface?.let {
                     builder.addTarget(it)
                 }
                 previewDataSurface?.let {
                     builder.addTarget(it)
                 }
+                // 自动对焦
                 builder[CaptureRequest.CONTROL_AF_MODE] =
                     CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
                 builder[CaptureRequest.CONTROL_AE_MODE] =
@@ -369,11 +422,20 @@ class PreviewActivity : AppCompatActivity() {
                 mSession = session
                 session.setRepeatingRequest(
                     request, object : CameraCaptureSession.CaptureCallback() {
-                        override fun onCaptureStarted(session: CameraCaptureSession, request: CaptureRequest, timestamp: Long, frameNumber: Long) {
+                        override fun onCaptureStarted(
+                            session: CameraCaptureSession,
+                            request: CaptureRequest,
+                            timestamp: Long,
+                            frameNumber: Long
+                        ) {
                             super.onCaptureStarted(session, request, timestamp, frameNumber)
                         }
 
-                        override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+                        override fun onCaptureCompleted(
+                            session: CameraCaptureSession,
+                            request: CaptureRequest,
+                            result: TotalCaptureResult
+                        ) {
 
                         }
                     },
@@ -458,7 +520,11 @@ class PreviewActivity : AppCompatActivity() {
         }
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
         if (requestCode == REQUEST_PERMISSION_CODE) {
             val res = grantResults.reduce { x, y -> x + y }
             if (res == PackageManager.PERMISSION_GRANTED) {

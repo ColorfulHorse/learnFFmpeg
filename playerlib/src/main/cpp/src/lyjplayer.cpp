@@ -30,6 +30,12 @@ void LyjPlayer::startPlay(const char *url) {
     ThreadPool *pool = new ThreadPool(8);
     this->url = url;
     playing = true;
+    if (task_decode.joinable()) {
+        task_decode.join();
+    }
+    if (task.joinable()) {
+        task.join();
+    }
     // 解码线程
     task_decode = thread([this] {
         decodeVideo();
@@ -48,7 +54,7 @@ void LyjPlayer::startPlay(const char *url) {
             LOGE("打开文件失败code:%d msg:%s", ret, av_err2str(ret));
             callbackError(env, PlayError::CONNECT_TIMEOUT);
             vm->DetachCurrentThread();
-            stopPlay();
+            destroyPlay();
             return ret;
         }
         callbackState(env, PlayState::CONNECTED);
@@ -58,7 +64,7 @@ void LyjPlayer::startPlay(const char *url) {
             LOGE("查找流失败 %s", av_err2str(ret));
             callbackError(env, PlayError::ERROR_STREAM);
             vm->DetachCurrentThread();
-            stopPlay();
+            destroyPlay();
             return ret;
         }
         int index = -1;
@@ -72,7 +78,7 @@ void LyjPlayer::startPlay(const char *url) {
             LOGE("没有视频流");
             callbackError(env, PlayError::NONE_VIDEO_STREAM);
             vm->DetachCurrentThread();
-            stopPlay();
+            destroyPlay();
             return -1;
         }
         AVCodecParameters *params = formatContext->streams[index]->codecpar;
@@ -95,7 +101,7 @@ void LyjPlayer::startPlay(const char *url) {
             LOGE("找不到解码器");
             callbackError(env, PlayError::UNKNOW);
             vm->DetachCurrentThread();
-            stopPlay();
+            destroyPlay();
             return -1;
         }
         codecContext = avcodec_alloc_context3(codec);
@@ -106,7 +112,7 @@ void LyjPlayer::startPlay(const char *url) {
             LOGE("初始化解码器失败:%s", av_err2str(ret));
             callbackError(env, PlayError::UNKNOW);
             vm->DetachCurrentThread();
-            stopPlay();
+            destroyPlay();
             return -1;
         }
         this->width = codecContext->width;
@@ -126,7 +132,7 @@ void LyjPlayer::startPlay(const char *url) {
         if (ANativeWindow_setBuffersGeometry(window, width, height, WINDOW_FORMAT_RGBA_8888) < 0) {
             callbackError(env, PlayError::UNKNOW);
             vm->DetachCurrentThread();
-            stopPlay();
+            destroyPlay();
             LOGE("初始化播放窗口失败");
             return -1;
         }
@@ -162,7 +168,7 @@ int LyjPlayer::decodeVideo() {
             LOGE("avcodec_send_packet err code: %d, msg:%s", ret, av_err2str(ret));
             av_packet_free(&packet);
             vm->DetachCurrentThread();
-            stopPlay();
+            destroyPlay();
             return -1;
         }
         LOGE("send a packet");
@@ -174,7 +180,7 @@ int LyjPlayer::decodeVideo() {
                 LOGE("avcodec_receive_frame error %s", av_err2str(ret));
                 av_packet_free(&packet);
                 vm->DetachCurrentThread();
-                stopPlay();
+                destroyPlay();
                 return -1;
             }
             LOGE("receive a frame");
@@ -233,6 +239,13 @@ int LyjPlayer::stopPlay() {
     if (task.joinable()) {
         task.join();
     }
+    destroyPlay();
+    return 0;
+}
+
+int LyjPlayer::destroyPlay() {
+    LOGE("destroyPlay");
+    playing = false;
     queue.clear();
     index = 0;
     if (sws_context) {

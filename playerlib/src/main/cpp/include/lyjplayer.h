@@ -53,6 +53,8 @@ private:
     // 解码
     int decodeVideo();
 
+    int destroyPlay();
+
     void callbackState(JNIEnv *env, PlayState state);
 
     void callbackError(JNIEnv *env, PlayError error);

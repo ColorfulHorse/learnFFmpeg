@@ -41,69 +41,77 @@ int Publisher::startPublish(const char *path, int width, int height, int orienta
     pool = new ThreadPool(8);
     running = true;
     initing = true;
-    worker = thread([=]() {
-        JNIEnv *env = nullptr;
-        int ret = vm->AttachCurrentThread(&env, nullptr);
-        ret = initPublish(env);
-        initing = false;
-        if (ret == 0) {
-            while (running.load()) {
-                unsigned char *buffer = nullptr;
-                buffer = dataPool.pop();
-                if (buffer) {
-                    // 解码后/压缩前的数据
-                    AVFrame *frame = nullptr;
-                    // 获取源图像字节大小，1byte内存对齐 yuv420P YYYYUV
-                    int pic_size = av_image_get_buffer_size(codecContext->pix_fmt,
-                                                            codecContext->width,
-                                                            codecContext->height, 1);
-                    // 创建缓冲区
-                    uint8_t *pic_buf = (uint8_t *) (av_malloc(static_cast<size_t>(pic_size)));
-                    // 创建编码数据
-                    frame = av_frame_alloc();
-                    frame->format = codecContext->pix_fmt;
-                    frame->width = codecContext->width;
-                    frame->height = codecContext->height;
-                    // 格式化缓冲区内存
-                    // dst_data: 格式化通道如rgb三通道
-                    av_image_fill_arrays(frame->data, frame->linesize, pic_buf,
-                                         codecContext->pix_fmt,
-                                         codecContext->width, codecContext->height, 1);
-                    int32_t ysize = width * height;
-                    int32_t usize = (width / 2) * (height / 2);
-                    const uint8_t *sy = buffer;
-                    const uint8_t *su = buffer + ysize;
-                    const uint8_t *sv = buffer + ysize + usize;
+    if (worker.joinable()) {
+        worker.join();
+    }
+    // 开启推流线程，循环队列推流
+    worker = thread([this]() {
+        encodeRun();
+    });
+    return 0;
+}
 
-                    uint8_t *ty = pic_buf;
-                    uint8_t *tu = pic_buf + ysize;
-                    uint8_t *tv = pic_buf + ysize + usize;
+/**
+ * 编码线程
+ */
+void Publisher::encodeRun() {
+    JNIEnv *env = nullptr;
+    int ret = vm->AttachCurrentThread(&env, nullptr);
+    ret = initPublish(env);
+    initing = false;
+    if (ret == 0) {
+        while (running.load()) {
+            unsigned char *buffer = nullptr;
+            buffer = dataPool.pop();
+            if (buffer) {
+                // 解码后/压缩前的数据
+                AVFrame *frame = nullptr;
+                // 获取源图像字节大小，1byte内存对齐 yuv420P YYYYUV
+                int pic_size = av_image_get_buffer_size(codecContext->pix_fmt,
+                                                        codecContext->width,
+                                                        codecContext->height, 1);
+                // 创建缓冲区
+                uint8_t *pic_buf = (uint8_t *) (av_malloc(static_cast<size_t>(pic_size)));
+                // 创建编码数据
+                frame = av_frame_alloc();
+                frame->format = codecContext->pix_fmt;
+                frame->width = codecContext->width;
+                frame->height = codecContext->height;
+                // 格式化缓冲区内存
+                // dst_data: 格式化通道如rgb三通道
+                av_image_fill_arrays(frame->data, frame->linesize, pic_buf,
+                                     codecContext->pix_fmt,
+                                     codecContext->width, codecContext->height, 1);
+                int32_t ysize = width * height;
+                int32_t usize = (width / 2) * (height / 2);
+                const uint8_t *sy = buffer;
+                const uint8_t *su = buffer + ysize;
+                const uint8_t *sv = buffer + ysize + usize;
 
-                    // 旋转
-                    libyuv::I420Rotate(sy, this->height, su, this->height >> 1, sv,
-                                       this->height >> 1,
-                                       ty, this->width, tu, this->width >> 1, tv, this->width >> 1,
-                                       this->height, this->width,
-                                       (libyuv::RotationMode) orientation);
-                    frame->data[0] = ty;
-                    frame->data[1] = tu;
-                    frame->data[2] = tv;
+                uint8_t *ty = pic_buf;
+                uint8_t *tu = pic_buf + ysize;
+                uint8_t *tv = pic_buf + ysize + usize;
 
-                    chrono::system_clock::time_point start = chrono::system_clock::now();
-                    encodeFrame(frame);
-                    chrono::system_clock::time_point finish = chrono::system_clock::now();
-                    LOGE("encode time: %lf",
-                         chrono::duration_cast<chrono::duration<double, ratio<1, 1000>>>(
-                                 finish - start).count());
-                    delete[] buffer;
-                }
+                // 旋转
+                libyuv::I420Rotate(sy, height, su, height >> 1, sv, height >> 1,
+                                   ty, width, tu, width >> 1, tv, width>> 1,
+                                   height, width, (libyuv::RotationMode) orientation);
+                frame->data[0] = ty;
+                frame->data[1] = tu;
+                frame->data[2] = tv;
+
+                chrono::system_clock::time_point start = chrono::system_clock::now();
+                encodeFrame(frame);
+                chrono::system_clock::time_point finish = chrono::system_clock::now();
+                LOGE("encode time: %lf",
+                     chrono::duration_cast<chrono::duration<double, ratio<1, 1000>>>(
+                             finish - start).count());
+                delete[] buffer;
             }
         }
-        vm->DetachCurrentThread();
-        destroyPublish();
-    });
-    worker.detach();
-    return 0;
+    }
+    vm->DetachCurrentThread();
+    destroyPublish();
 }
 
 /**
@@ -113,7 +121,7 @@ int Publisher::startPublish(const char *path, int width, int height, int orienta
 int Publisher::initPublish(JNIEnv *env) {
     int ret = avformat_network_init();
     AVCodec *codec = nullptr;
-    // 根据输出文件名创建AVFormatContext
+    // 根据输出封装格式创建AVFormatContext
     avformat_alloc_output_context2(&formatContext, nullptr, "flv", path);
     // 获取编码器
     codec = avcodec_find_encoder(AV_CODEC_ID_H264);
@@ -164,12 +172,12 @@ int Publisher::initPublish(JNIEnv *env) {
     if (avcodec_open2(codecContext, codec, &codec_dict) < 0) {
         return -1;
     }
-    //new一个流并挂到fmt_ctx名下，调用avformat_free_context时会释放该流
+    // new一个流并挂到fmt_ctx名下，调用avformat_free_context时会释放该流
     stream = avformat_new_stream(formatContext, nullptr);
     if (stream == nullptr) {
         return -1;
     }
-    // 复制解码配置到码流配置
+    // 复制编码配置到码流配置
     avcodec_parameters_from_context(stream->codecpar, codecContext);
     // 打开输出流
     ret = avio_open(&formatContext->pb, path, AVIO_FLAG_WRITE);
@@ -241,6 +249,9 @@ int Publisher::pushData(unsigned char *buffer) {
 }
 
 int Publisher::encodeFrame(AVFrame *frame) {
+    if (frame) {
+        frame->pts = index;
+    }
     // 编码一帧数据
     int ret = avcodec_send_frame(codecContext, frame);
     if (ret == AVERROR(EAGAIN)) {
@@ -259,7 +270,8 @@ int Publisher::encodeFrame(AVFrame *frame) {
         // 读编码完成的数据 某些解码器可能会消耗部分数据包而不返回任何输出，因此需要在循环中调用此函数，直到它返回EAGAIN
         ret = avcodec_receive_packet(codecContext, packet);
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-            // 读完
+            // 读完一帧
+            index++;
             av_packet_free(&packet);
             av_frame_free(&frame);
             return 0;
@@ -269,19 +281,17 @@ int Publisher::encodeFrame(AVFrame *frame) {
             av_frame_free(&frame);
             return -1;
         }
-        //frame->pts = index;
         packet->stream_index = stream->index;
-        // flv mp4一般时间基为 1/1000
-        // 将codec的pts转换为mux层的pts
-        //packet->pts = index * (stream->time_base.den) / ((stream->time_base.num) * fps);
-        int64_t pts = av_rescale_q_rnd(index, codecContext->time_base, stream->time_base,
-                                       AV_ROUND_NEAR_INF);
-        packet->pts = pts;
-        packet->dts = packet->pts;
-        // 25帧 1000/25 = 40
-        packet->duration = (stream->time_base.den) / ((stream->time_base.num) * fps);
-        packet->pos = -1;
         if (frame) {
+            // flv mp4一般时间基为 1/1000
+            // 将codec的pts转换为mux层的pts
+            int64_t pts = av_rescale_q_rnd(packet->pts, codecContext->time_base, stream->time_base, AV_ROUND_NEAR_INF);
+            int64_t dts = av_rescale_q_rnd(packet->dts, codecContext->time_base, stream->time_base, AV_ROUND_NEAR_INF);
+            packet->pts = pts;
+            packet->dts = dts;
+            // 表示当前帧的持续时间， 25帧 1000/25 = 40
+            packet->duration = (stream->time_base.den) / ((stream->time_base.num) * fps);
+            packet->pos = -1;
             av_frame_free(&frame);
         }
         int64_t frame_index = index;
@@ -305,7 +315,6 @@ int Publisher::encodeFrame(AVFrame *frame) {
             }
             av_packet_free(&packet);
         });
-        index++;
     }
     return 0;
 }
@@ -315,13 +324,9 @@ bool Publisher::isPublish() {
 }
 
 int Publisher::stopPublish() {
-    if (running.load()) {
-        running = false;
-        if (worker.joinable()) {
-            worker.join();
-        }
-    } else {
-        destroyPublish();
+    running = false;
+    if (worker.joinable()) {
+        worker.join();
     }
     dataPool.clear();
     return 0;
