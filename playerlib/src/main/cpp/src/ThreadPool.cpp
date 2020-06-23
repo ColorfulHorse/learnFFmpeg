@@ -3,6 +3,11 @@
 //
 #include <ThreadPool.h>
 
+ThreadPool::ThreadPool(size_t threads, int max) : ThreadPool(threads) {
+    this->max = max;
+}
+
+
 // the constructor just launches some amount of workers
 ThreadPool::ThreadPool(size_t threads) {
     if (stop.load()) {
@@ -41,6 +46,13 @@ void ThreadPool::enqueue(std::function<void()> &&task) {
         //throw std::runtime_error("enqueue on stopped ThreadPool1");
     else{
         std::unique_lock<std::mutex> lock(queue_mutex);
+        if (max != -1) {
+            if (tasks.size() > max) {
+                LOGE("too many tasks, clear");
+                std::queue<std::function<void()>> empty;
+                tasks.swap(empty);
+            }
+        }
         tasks.emplace(task);
     }
     condition.notify_one();

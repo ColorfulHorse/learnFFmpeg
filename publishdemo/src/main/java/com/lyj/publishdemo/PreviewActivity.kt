@@ -17,6 +17,8 @@ import androidx.core.view.doOnLayout
 import com.lyj.learnffmpeg.PublishCallBack
 import com.lyj.learnffmpeg.Publisher
 import kotlinx.android.synthetic.main.activity_preview.*
+import java.util.*
+import kotlin.concurrent.timerTask
 import kotlin.math.abs
 import kotlin.system.measureTimeMillis
 
@@ -388,7 +390,6 @@ class PreviewActivity : AppCompatActivity() {
                 mPreviewReader = previewReader
                 previewReader.setOnImageAvailableListener(imageListener, backgroundHandler)
                 previewDataSurface = previewReader.surface
-
                 // 预览surface
                 mSurfaceTexture?.run {
                     Log.e("preview", "width:${previewSize.width}  height:${previewSize.height}")

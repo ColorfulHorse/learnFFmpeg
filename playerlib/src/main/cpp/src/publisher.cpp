@@ -38,13 +38,13 @@ int Publisher::startPublish(const char *path, int width, int height, int orienta
     this->height = orientation % 180 == 0 ? height:width;
     LOGE("publish width:%d, height:%d", this->width, this->height);
     this->orientation = orientation;
-    pool = new ThreadPool(8);
+    pool = new ThreadPool(8, 200);
     running = true;
     initing = true;
     if (worker.joinable()) {
         worker.join();
     }
-    // 开启推流线程，循环队列推流
+    // 开启编码线程，循环队列编码
     worker = thread([this]() {
         encodeRun();
     });
@@ -297,7 +297,7 @@ int Publisher::encodeFrame(AVFrame *frame) {
         int64_t frame_index = index;
         pool->enqueue([=]() mutable {
             AVRational time_base = formatContext->streams[0]->time_base; //{ 1, 1000 };
-            LOGI("Send frame index:%lld,pts:%lld,dts:%lld,duration:%lld,time_base:%d,%d,size:%d",
+            LOGI("Send frame index:%" PRId64", pts:%" PRId64", dts:%" PRId64", duration:%" PRId64", time_base:%d,%d,size:%d",
                  (int64_t) frame_index,
                  (int64_t) packet->pts,
                  (int64_t) packet->dts,

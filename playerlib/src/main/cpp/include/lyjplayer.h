@@ -7,11 +7,11 @@
 
 #include <jni.h>
 #include <string>
-#include <SafeQueue.h>
 #include <ThreadPool.h>
 #include <android/native_window.h>
 #include <LinkedBlockingQueue.h>
 #include <constant.h>
+#include <Timer.h>
 
 
 #ifdef __cplusplus
@@ -27,6 +27,11 @@ extern "C" {
 
 using namespace std;
 
+struct FrameData {
+    AVFrame *frame;
+    uint8_t *buffer;
+};
+
 class LyjPlayer {
 private:
     const char *url;
@@ -39,19 +44,22 @@ private:
     // AVPacket是存储压缩编码数据相关信息的结构体
 //    AVPacket *packet = nullptr;
 //    // 解码后/压缩前的数据
+    int buffer_size;
     AVFrame *frame = nullptr, *temp = nullptr;
     AVPacket *packet = nullptr;
     SwsContext *sws_context = nullptr;
     uint8_t *buffer = nullptr;
     ANativeWindow_Buffer windowBuffer;
-    thread task, task_decode;
+    thread task;
     // 记录帧编号
     int index;
     // 网络接收的缓冲
-    LinkedBlockingQueue<AVPacket *> queue;
+    LinkedBlockingQueue<FrameData> queue;
+    Timer timer;
 
-    // 解码
-    int decodeVideo();
+    int decodeFrame();
+
+    int render();
 
     int destroyPlay();
 

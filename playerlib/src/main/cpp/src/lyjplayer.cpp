@@ -15,6 +15,7 @@ extern "C" {
 }
 #endif
 
+
 LyjPlayer::LyjPlayer() = default;
 
 LyjPlayer::~LyjPlayer() {
@@ -30,16 +31,9 @@ void LyjPlayer::startPlay(const char *url) {
     ThreadPool *pool = new ThreadPool(8);
     this->url = url;
     playing = true;
-    if (task_decode.joinable()) {
-        task_decode.join();
-    }
     if (task.joinable()) {
         task.join();
     }
-    // 解码线程
-    task_decode = thread([this] {
-        decodeVideo();
-    });
     // 取流线程
     task = thread([this] {
         JNIEnv *env = nullptr;
@@ -81,11 +75,12 @@ void LyjPlayer::startPlay(const char *url) {
             destroyPlay();
             return -1;
         }
-        AVCodecParameters *params = formatContext->streams[index]->codecpar;
+        AVStream *videoStream = formatContext->streams[index];
+        AVCodecParameters *params = videoStream->codecpar;
         LOGE("AVCodecParameters id:%d, width:%d, height%d", params->codec_id, params->width,
              params->height);
         // 查找解码器
-        AVCodecID codecId = formatContext->streams[index]->codecpar->codec_id;
+        AVCodecID codecId = videoStream->codecpar->codec_id;
         AVCodec *codec = nullptr;
         // h264硬解
         if (codecId == AV_CODEC_ID_H264) {
@@ -106,7 +101,7 @@ void LyjPlayer::startPlay(const char *url) {
         }
         codecContext = avcodec_alloc_context3(codec);
         // 复制码流配置到解码器
-        avcodec_parameters_to_context(codecContext, formatContext->streams[index]->codecpar);
+        avcodec_parameters_to_context(codecContext, videoStream->codecpar);
         ret = avcodec_open2(codecContext, codec, nullptr);
         if (ret < 0) {
             LOGE("初始化解码器失败:%s", av_err2str(ret));
@@ -117,13 +112,9 @@ void LyjPlayer::startPlay(const char *url) {
         }
         this->width = codecContext->width;
         this->height = codecContext->height;
-        int buffer_size = av_image_get_buffer_size(AV_PIX_FMT_RGBA, width, height, 1);
-        frame = av_frame_alloc();
+        buffer_size = av_image_get_buffer_size(AV_PIX_FMT_RGBA, width, height, 1);
         temp = av_frame_alloc();
         packet = av_packet_alloc();
-        buffer = static_cast<uint8_t *>(av_malloc(buffer_size));
-        av_image_fill_arrays(frame->data, frame->linesize, buffer, AV_PIX_FMT_RGBA, width, height,
-                             1);
         // 创建格式转换方式
         sws_context = sws_getContext(width, height, codecContext->pix_fmt, width,
                                      height, AV_PIX_FMT_RGBA, SWS_BICUBIC,
@@ -136,6 +127,15 @@ void LyjPlayer::startPlay(const char *url) {
             LOGE("初始化播放窗口失败");
             return -1;
         }
+        double fps = av_q2d(videoStream->avg_frame_rate);
+        AVRational timebase = videoStream->time_base;
+        // 每一帧持续时间 毫秒
+        int duration = static_cast<int>(timebase.den / timebase.num / fps);
+        LOGE("videoStream FPS %lf, duration %d", fps, duration);
+        // 定时绘制，保持帧率
+        timer.setInterval([this] {
+            render();
+        }, duration);
         while (playing) {
             // 读流放入队列
             ret = av_read_frame(formatContext, packet);
@@ -143,8 +143,7 @@ void LyjPlayer::startPlay(const char *url) {
                 continue;
             }
             if (packet->stream_index == index) {
-                AVPacket *copy = av_packet_clone(packet);
-                queue.push(copy);
+                decodeFrame();
             }
             av_packet_unref(packet);
         }
@@ -155,62 +154,76 @@ void LyjPlayer::startPlay(const char *url) {
     });
 }
 
-int LyjPlayer::decodeVideo() {
-    int ret = 0;
-    JNIEnv *env = nullptr;
-    ret = vm->AttachCurrentThread(&env, nullptr);
-    while (playing) {
-        AVPacket *packet = queue.pop();
-        ret = avcodec_send_packet(codecContext, packet);
-        if (ret == AVERROR(EAGAIN)) {
-            ret = 0;
+// 解码
+int LyjPlayer::decodeFrame() {
+    int ret = avcodec_send_packet(codecContext, packet);
+    if (ret == AVERROR(EAGAIN)) {
+        ret = 0;
+    } else if (ret < 0) {
+        LOGE("avcodec_send_packet err code: %d, msg:%s", ret, av_err2str(ret));
+        av_packet_free(&packet);
+        vm->DetachCurrentThread();
+        destroyPlay();
+        return -1;
+    }
+    LOGE("send a packet");
+    while (ret >= 0) {
+        ret = avcodec_receive_frame(codecContext, temp);
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+            return 0;
         } else if (ret < 0) {
-            LOGE("avcodec_send_packet err code: %d, msg:%s", ret, av_err2str(ret));
+            LOGE("avcodec_receive_frame error %s", av_err2str(ret));
             av_packet_free(&packet);
             vm->DetachCurrentThread();
             destroyPlay();
             return -1;
         }
-        LOGE("send a packet");
-        while (ret >= 0) {
-            ret = avcodec_receive_frame(codecContext, temp);
-            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-                continue;
-            } else if (ret < 0) {
-                LOGE("avcodec_receive_frame error %s", av_err2str(ret));
-                av_packet_free(&packet);
-                vm->DetachCurrentThread();
-                destroyPlay();
-                return -1;
-            }
-            LOGE("receive a frame");
-            sws_scale(sws_context, temp->data, temp->linesize, 0, codecContext->height,
-                      frame->data, frame->linesize);
-            ret = ANativeWindow_lock(window, &windowBuffer, nullptr);
-            // 开始解码第一帧回调
-            if (index == 0) {
-                callbackState(env, PlayState::START);
-            }
-            index++;
-            if (ret < 0) {
-                LOGE("cannot lock window");
-            } else {
-                //逐行复制
-                uint8_t *bufferBits = (uint8_t *) windowBuffer.bits;
-                // 四通道所以*4
-                for (int h = 0; h < height; h++) {
-                    memcpy(bufferBits + h * windowBuffer.stride * 4,
-                           buffer + h * frame->linesize[0],
-                           static_cast<size_t>(frame->linesize[0]));
-                   // LOGI("复制%d到%d", h * windowBuffer.stride * 4, h * frame->linesize[0]);
-                }
-                ANativeWindow_unlockAndPost(window);
-            }
-        }
-        av_packet_free(&packet);
+        AVFrame * frame = av_frame_alloc();
+        uint8_t *buffer = static_cast<uint8_t *>(av_malloc(buffer_size));
+        av_image_fill_arrays(frame->data, frame->linesize, buffer, AV_PIX_FMT_RGBA, width, height,
+                             1);
+        sws_scale(sws_context, temp->data, temp->linesize, 0, codecContext->height,
+                  frame->data, frame->linesize);
+        FrameData frameData = {frame, buffer};
+        queue.push(frameData);
     }
-    vm->DetachCurrentThread();
-    LOGE("decode thread finish");
+    return ret;
+}
+
+// 绘制
+int LyjPlayer::render() {
+    int ret = 0;
+    JNIEnv *env = nullptr;
+    FrameData frameData = queue.pop();
+    AVFrame *frame = frameData.frame;
+    uint8_t *buffer = frameData.buffer;
+    // 开始解码第一帧回调
+    if (index == 0) {
+        ret = vm->AttachCurrentThread(&env, nullptr);
+        callbackState(env, PlayState::START);
+    }
+    index++;
+    ret = ANativeWindow_lock(window, &windowBuffer, nullptr);
+    if (ret < 0) {
+        LOGE("cannot lock window");
+    } else {
+        //逐行复制
+        uint8_t *bufferBits = (uint8_t *) windowBuffer.bits;
+        // 四通道所以*4
+        for (int h = 0; h < height; h++) {
+            memcpy(bufferBits + h * windowBuffer.stride * 4,
+                   buffer + h * frame->linesize[0],
+                   static_cast<size_t>(frame->linesize[0]));
+            // LOGI("复制%d到%d", h * windowBuffer.stride * 4, h * frame->linesize[0]);
+        }
+        ANativeWindow_unlockAndPost(window);
+    }
+
+    av_free(buffer);
+    av_frame_free(&frame);
+    if (env) {
+        vm->DetachCurrentThread();
+    }
     return ret;
 }
 
@@ -233,9 +246,6 @@ void LyjPlayer::callbackError(JNIEnv *env, PlayError error) {
 int LyjPlayer::stopPlay() {
     LOGE("stopPlay");
     playing = false;
-    if (task_decode.joinable()) {
-        task_decode.join();
-    }
     if (task.joinable()) {
         task.join();
     }
@@ -246,6 +256,7 @@ int LyjPlayer::stopPlay() {
 int LyjPlayer::destroyPlay() {
     LOGE("destroyPlay");
     playing = false;
+    timer.stop();
     queue.clear();
     index = 0;
     if (sws_context) {

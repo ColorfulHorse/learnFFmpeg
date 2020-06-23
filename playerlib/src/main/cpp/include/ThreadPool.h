@@ -14,11 +14,13 @@
 #include <functional>
 #include <stdexcept>
 #include <logger.h>
-#include <SafeQueue.h>
+using namespace std;
 
 class ThreadPool {
 public:
     ThreadPool(size_t);
+
+    ThreadPool(size_t, int max);
 
     void enqueue(std::function<void()> && task);
 
@@ -34,5 +36,6 @@ private:
     std::mutex queue_mutex;
     std::condition_variable condition;
     atomic_bool stop = {false};
+    int max = -1;
 };
 #endif //LYJPLAYER_THREADPOOL_H
