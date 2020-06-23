@@ -65,24 +65,6 @@ void Publisher::encodeRun() {
             unsigned char *buffer = nullptr;
             buffer = dataPool.pop();
             if (buffer) {
-                // 解码后/压缩前的数据
-                AVFrame *frame = nullptr;
-                // 获取源图像字节大小，1byte内存对齐 yuv420P YYYYUV
-                int pic_size = av_image_get_buffer_size(codecContext->pix_fmt,
-                                                        codecContext->width,
-                                                        codecContext->height, 1);
-                // 创建缓冲区
-                uint8_t *pic_buf = (uint8_t *) (av_malloc(static_cast<size_t>(pic_size)));
-                // 创建编码数据
-                frame = av_frame_alloc();
-                frame->format = codecContext->pix_fmt;
-                frame->width = codecContext->width;
-                frame->height = codecContext->height;
-                // 格式化缓冲区内存
-                // dst_data: 格式化通道如rgb三通道
-                av_image_fill_arrays(frame->data, frame->linesize, pic_buf,
-                                     codecContext->pix_fmt,
-                                     codecContext->width, codecContext->height, 1);
                 int32_t ysize = width * height;
                 int32_t usize = (width / 2) * (height / 2);
                 const uint8_t *sy = buffer;
@@ -178,6 +160,26 @@ int Publisher::initPublish(JNIEnv *env) {
     if (stream == nullptr) {
         return -1;
     }
+    // 获取源图像字节大小，1byte内存对齐 yuv420P YYYYUV
+    int pic_size = av_image_get_buffer_size(codecContext->pix_fmt,
+                                            codecContext->width,
+                                            codecContext->height, 1);
+    // 创建缓冲区
+    pic_buf = (uint8_t *) (av_malloc(static_cast<size_t>(pic_size)));
+    // 创建编码数据
+    frame = av_frame_alloc();
+    frame->format = codecContext->pix_fmt;
+    frame->width = codecContext->width;
+    frame->height = codecContext->height;
+    // 格式化缓冲区内存
+    // dst_data: 格式化通道如rgb三通道
+    av_image_fill_arrays(frame->data, frame->linesize, pic_buf,
+                         codecContext->pix_fmt,
+                         codecContext->width, codecContext->height, 1);
+
+    // 创建packet存储编码后的数据
+    packet = av_packet_alloc();
+    av_new_packet(packet, pic_size);
     // 复制编码配置到码流配置
     avcodec_parameters_from_context(stream->codecpar, codecContext);
     // 打开输出流
@@ -219,6 +221,14 @@ int Publisher::destroyPublish() {
         av_free(pic_buf);
         pic_buf = nullptr;
     }
+    if (packet) {
+        av_packet_free(&packet);
+        packet = nullptr;
+    }
+    if (frame) {
+        av_frame_free(&frame);
+        frame = nullptr;
+    }
     if (codec_dict) {
         av_dict_free(&codec_dict);
     }
@@ -259,24 +269,16 @@ int Publisher::encodeFrame(AVFrame *frame) {
         return -1;
     }
     while (ret >= 0) {
-        AVPacket *packet = nullptr;
-        packet = av_packet_alloc();
-        int pic_size = av_image_get_buffer_size(codecContext->pix_fmt,
-                                                codecContext->width,
-                                                codecContext->height, 1);
-        av_new_packet(packet, pic_size);
         // 读编码完成的数据 某些解码器可能会消耗部分数据包而不返回任何输出，因此需要在循环中调用此函数，直到它返回EAGAIN
         ret = avcodec_receive_packet(codecContext, packet);
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
             // 读完一帧
             index++;
-            av_packet_free(&packet);
-            av_frame_free(&frame);
+            av_packet_unref(packet);
             return 0;
         } else if (ret < 0) {
             LOGE("ENCODE ERROR CODE %d", ret);
-            av_packet_free(&packet);
-            av_frame_free(&frame);
+            av_packet_unref(packet);
             return -1;
         }
         packet->stream_index = stream->index;
@@ -290,7 +292,6 @@ int Publisher::encodeFrame(AVFrame *frame) {
             // 表示当前帧的持续时间， 25帧 1000/25 = 40
             packet->duration = (stream->time_base.den) / ((stream->time_base.num) * fps);
             packet->pos = -1;
-            av_frame_free(&frame);
         }
         int64_t frame_index = index;
         AVRational time_base = formatContext->streams[0]->time_base; //{ 1, 1000 };
@@ -310,27 +311,7 @@ int Publisher::encodeFrame(AVFrame *frame) {
         if (code != 0) {
             LOGE("av_interleaved_write_frame failed");
         }
-        av_packet_free(&packet);
-//        pool->enqueue([=]() mutable {
-//            AVRational time_base = formatContext->streams[0]->time_base; //{ 1, 1000 };
-//            LOGI("Send frame index:%" PRId64", pts:%" PRId64", dts:%" PRId64", duration:%" PRId64", time_base:%d,%d,size:%d",
-//                 (int64_t) frame_index,
-//                 (int64_t) packet->pts,
-//                 (int64_t) packet->dts,
-//                 (int64_t) packet->duration,
-//                 time_base.num, time_base.den,
-//                 packet->size);
-//            // 将解码完的数据包写入输出
-//            long start = clock();
-//            LOGE("start write a frame");
-//            int code = av_interleaved_write_frame(formatContext, packet);
-//            long end = clock();
-//            LOGE("send time: %ld", end - start);
-//            if (code != 0) {
-//                LOGE("av_interleaved_write_frame failed");
-//            }
-//            av_packet_free(&packet);
-//        });
+        av_packet_unref(packet);
     }
     return 0;
 }

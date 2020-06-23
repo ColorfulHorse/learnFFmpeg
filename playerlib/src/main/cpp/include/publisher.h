@@ -46,9 +46,9 @@ private:
     AVCodecContext *codecContext = nullptr;
     AVDictionary *codec_dict = nullptr;
     // AVPacket是存储压缩编码数据相关信息的结构体
-//    AVPacket *packet = nullptr;
-//    // 解码后/压缩前的数据
-//    AVFrame *frame = nullptr;
+    AVPacket *packet = nullptr;
+    // 解码后/压缩前的数据
+    AVFrame *frame = nullptr;
     AVStream *stream = nullptr;
     thread worker;
 
