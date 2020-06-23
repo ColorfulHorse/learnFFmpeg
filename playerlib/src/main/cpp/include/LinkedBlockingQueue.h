@@ -22,9 +22,11 @@ private:
     size_t max = static_cast<size_t>(-1);
     std::atomic_size_t count = {0};
 public:
-    LinkedBlockingQueue<T>() = default;
+    LinkedBlockingQueue<T>(){
 
-    LinkedBlockingQueue<T>(const size_t size) : max(size) {
+    };
+
+    LinkedBlockingQueue<T>(const size_t size) : max(size){
 
     };
 

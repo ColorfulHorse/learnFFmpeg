@@ -32,7 +32,6 @@ private:
 
     int encodeFrame(AVFrame *frame);
 
-    ThreadPool *pool = nullptr;
     mutex pool_mutex;
     const char *path;
     int width = 0;

@@ -3,13 +3,7 @@
 //
 #include <ThreadPool.h>
 
-ThreadPool::ThreadPool(size_t threads, int max) : ThreadPool(threads) {
-    this->max = max;
-}
-
-
-// the constructor just launches some amount of workers
-ThreadPool::ThreadPool(size_t threads) {
+ThreadPool::ThreadPool(size_t threads, int max) : max(max) {
     if (stop.load()) {
         LOGE("stop = true");
     } else {
@@ -27,8 +21,8 @@ ThreadPool::ThreadPool(size_t threads) {
                                 //LOGE("tasks size:%d", (int)tasks.size());
                                 return this->stop.load() || !this->tasks.empty();
                             });
-                        if (this->stop.load() || this->tasks.empty())
-                            break;
+                            if (this->stop.load() || this->tasks.empty())
+                                break;
                             task = std::move(this->tasks.front());
                             this->tasks.pop();
                         }
@@ -36,6 +30,11 @@ ThreadPool::ThreadPool(size_t threads) {
                     }
                 }
         );
+}
+
+
+// the constructor just launches some amount of workers
+ThreadPool::ThreadPool(size_t threads): ThreadPool(threads, -1) {
 }
 
 // add new work item to the pool

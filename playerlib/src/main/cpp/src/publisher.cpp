@@ -19,7 +19,9 @@ extern "C" {
 }
 #endif
 
-Publisher::Publisher() = default;
+Publisher::Publisher() {
+
+};
 
 /**
  * 开始推流
@@ -38,7 +40,6 @@ int Publisher::startPublish(const char *path, int width, int height, int orienta
     this->height = orientation % 180 == 0 ? height:width;
     LOGE("publish width:%d, height:%d", this->width, this->height);
     this->orientation = orientation;
-    pool = new ThreadPool(8, 200);
     running = true;
     initing = true;
     if (worker.joinable()) {
@@ -214,11 +215,6 @@ int Publisher::destroyPublish() {
     }
     is_publish = false;
     running = false;
-    if (pool) {
-        delete pool;
-        pool = nullptr;
-    }
-
     if (pic_buf) {
         av_free(pic_buf);
         pic_buf = nullptr;
@@ -242,7 +238,9 @@ int Publisher::release() {
 int Publisher::pushData(unsigned char *buffer) {
     if (is_publish.load()) {
         lock_guard<mutex> lock(pool_mutex);
-        //dataPool.emplace(buffer);
+        if (dataPool.size() >= 200) {
+            dataPool.clear();
+        }
         dataPool.push(buffer);
     }
     return 0;
@@ -295,26 +293,44 @@ int Publisher::encodeFrame(AVFrame *frame) {
             av_frame_free(&frame);
         }
         int64_t frame_index = index;
-        pool->enqueue([=]() mutable {
-            AVRational time_base = formatContext->streams[0]->time_base; //{ 1, 1000 };
-            LOGI("Send frame index:%" PRId64", pts:%" PRId64", dts:%" PRId64", duration:%" PRId64", time_base:%d,%d,size:%d",
-                 (int64_t) frame_index,
-                 (int64_t) packet->pts,
-                 (int64_t) packet->dts,
-                 (int64_t) packet->duration,
-                 time_base.num, time_base.den,
-                 packet->size);
-            // 将解码完的数据包写入输出
-            long start = clock();
-            LOGE("start write a frame");
-            int code = av_interleaved_write_frame(formatContext, packet);
-            long end = clock();
-            LOGE("send time: %ld", end - start);
-            if (code != 0) {
-                LOGE("av_interleaved_write_frame failed");
-            }
-            av_packet_free(&packet);
-        });
+        AVRational time_base = formatContext->streams[0]->time_base; //{ 1, 1000 };
+        LOGI("Send frame index:%" PRId64", pts:%" PRId64", dts:%" PRId64", duration:%" PRId64", time_base:%d,%d,size:%d",
+             (int64_t) frame_index,
+             (int64_t) packet->pts,
+             (int64_t) packet->dts,
+             (int64_t) packet->duration,
+             time_base.num, time_base.den,
+             packet->size);
+        // 将解码完的数据包写入输出
+        chrono::system_clock::time_point start = chrono::system_clock::now();
+        int code = av_interleaved_write_frame(formatContext, packet);
+        chrono::system_clock::time_point end = chrono::system_clock::now();
+        int time = chrono::duration_cast<chrono::microseconds>(end - start).count();
+        LOGE("send time: %d microseconds", time);
+        if (code != 0) {
+            LOGE("av_interleaved_write_frame failed");
+        }
+        av_packet_free(&packet);
+//        pool->enqueue([=]() mutable {
+//            AVRational time_base = formatContext->streams[0]->time_base; //{ 1, 1000 };
+//            LOGI("Send frame index:%" PRId64", pts:%" PRId64", dts:%" PRId64", duration:%" PRId64", time_base:%d,%d,size:%d",
+//                 (int64_t) frame_index,
+//                 (int64_t) packet->pts,
+//                 (int64_t) packet->dts,
+//                 (int64_t) packet->duration,
+//                 time_base.num, time_base.den,
+//                 packet->size);
+//            // 将解码完的数据包写入输出
+//            long start = clock();
+//            LOGE("start write a frame");
+//            int code = av_interleaved_write_frame(formatContext, packet);
+//            long end = clock();
+//            LOGE("send time: %ld", end - start);
+//            if (code != 0) {
+//                LOGE("av_interleaved_write_frame failed");
+//            }
+//            av_packet_free(&packet);
+//        });
     }
     return 0;
 }
