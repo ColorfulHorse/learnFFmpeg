@@ -3,7 +3,6 @@
 //
 #include <LyjPlayer.h>
 #include <logger.h>
-#include <ThreadPool.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,7 +27,6 @@ int LyjPlayer::init() {
 }
 
 void LyjPlayer::startPlay(const char *url) {
-    ThreadPool *pool = new ThreadPool(8);
     this->url = url;
     playing = true;
     if (task.joinable()) {
