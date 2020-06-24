@@ -41,9 +41,6 @@ private:
     // AVFormatContext用于解封装 flv,avi,rmvb,mp4
     AVFormatContext *formatContext = nullptr;
     AVCodecContext *codecContext = nullptr;
-    // AVPacket是存储压缩编码数据相关信息的结构体
-//    AVPacket *packet = nullptr;
-//    // 解码后/压缩前的数据
     int buffer_size;
     AVFrame *frame = nullptr, *temp = nullptr;
     AVPacket *packet = nullptr;

@@ -32,13 +32,12 @@ void LyjPlayer::startPlay(const char *url) {
     if (task.joinable()) {
         task.join();
     }
-    // 取流线程
+    // 取流解码线程
     task = thread([this] {
         JNIEnv *env = nullptr;
         int ret = vm->AttachCurrentThread(&env, nullptr);
         avformat_network_init();
         formatContext = avformat_alloc_context();
-        //AVInputFormat *iformat = av_find_input_format("h264");
         // 打开文件
         LOGE("正在连接");
         ret = avformat_open_input(&formatContext, this->url, nullptr, nullptr);
@@ -61,6 +60,7 @@ void LyjPlayer::startPlay(const char *url) {
         }
         int index = -1;
         for (int i = 0; i < formatContext->nb_streams; i++) {
+            // 查找视频流，如果有音频的话就不止一个流，所以需要查找
             if (formatContext->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
                 index = i;
                 break;
@@ -80,7 +80,7 @@ void LyjPlayer::startPlay(const char *url) {
         // 查找解码器
         AVCodecID codecId = videoStream->codecpar->codec_id;
         AVCodec *codec = nullptr;
-        // h264硬解
+        // 使用h264硬解
         if (codecId == AV_CODEC_ID_H264) {
             codec = avcodec_find_decoder_by_name("h264_mediacodec");
             if (codec == nullptr) {
@@ -113,7 +113,7 @@ void LyjPlayer::startPlay(const char *url) {
         buffer_size = av_image_get_buffer_size(AV_PIX_FMT_RGBA, width, height, 1);
         temp = av_frame_alloc();
         packet = av_packet_alloc();
-        // 创建格式转换方式
+        // 创建格式转换方式，用于将yuv数据转换为rgba
         sws_context = sws_getContext(width, height, codecContext->pix_fmt, width,
                                      height, AV_PIX_FMT_RGBA, SWS_BICUBIC,
                                      nullptr, nullptr, nullptr);
@@ -125,28 +125,29 @@ void LyjPlayer::startPlay(const char *url) {
             LOGE("初始化播放窗口失败");
             return -1;
         }
+        // 获取帧率
         double fps = av_q2d(videoStream->avg_frame_rate);
         AVRational timebase = videoStream->time_base;
-        // 每一帧持续时间 毫秒
-        int duration = static_cast<int>(timebase.den / timebase.num / fps);
+        // 计算每一帧持续时间 毫秒
+        int duration = static_cast<int>(timebase.den / timebase.num / fps / (timebase.den / 1000));
         LOGE("videoStream FPS %lf, duration %d", fps, duration);
         // 定时绘制，保持帧率
         timer.setInterval([this] {
             render();
         }, duration);
         while (playing) {
-            // 读流放入队列
+            // 读流
             ret = av_read_frame(formatContext, packet);
             if (ret < 0) {
                 continue;
             }
             if (packet->stream_index == index) {
+                // 解码一帧
                 decodeFrame();
             }
             av_packet_unref(packet);
         }
         vm->DetachCurrentThread();
-        // stopPlay();
         return 0;
     });
 }
@@ -167,6 +168,7 @@ int LyjPlayer::decodeFrame() {
     while (ret >= 0) {
         ret = avcodec_receive_frame(codecContext, temp);
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+            // packet已读完
             return 0;
         } else if (ret < 0) {
             LOGE("avcodec_receive_frame error %s", av_err2str(ret));
@@ -175,10 +177,11 @@ int LyjPlayer::decodeFrame() {
             destroyPlay();
             return -1;
         }
-        AVFrame * frame = av_frame_alloc();
+        AVFrame *frame = av_frame_alloc();
         uint8_t *buffer = static_cast<uint8_t *>(av_malloc(buffer_size));
         av_image_fill_arrays(frame->data, frame->linesize, buffer, AV_PIX_FMT_RGBA, width, height,
                              1);
+        // 将frame数据转为rgba格式
         sws_scale(sws_context, temp->data, temp->linesize, 0, codecContext->height,
                   frame->data, frame->linesize);
         FrameData frameData = {frame, buffer};
@@ -194,7 +197,7 @@ int LyjPlayer::render() {
     FrameData frameData = queue.pop();
     AVFrame *frame = frameData.frame;
     uint8_t *buffer = frameData.buffer;
-    // 开始解码第一帧回调
+    // 开始绘制第一帧回调
     if (index == 0) {
         ret = vm->AttachCurrentThread(&env, nullptr);
         callbackState(env, PlayState::START);
@@ -204,18 +207,16 @@ int LyjPlayer::render() {
     if (ret < 0) {
         LOGE("cannot lock window");
     } else {
-        //逐行复制
         uint8_t *bufferBits = (uint8_t *) windowBuffer.bits;
-        // 四通道所以*4
+        // 逐行复制，显示画面其实就是把rgba数据逐行复制到ANativeWindow中的byte数组里
         for (int h = 0; h < height; h++) {
+            // rgba四通道，每个像素需要4byte，所以需要stride*4
             memcpy(bufferBits + h * windowBuffer.stride * 4,
                    buffer + h * frame->linesize[0],
                    static_cast<size_t>(frame->linesize[0]));
-            // LOGI("复制%d到%d", h * windowBuffer.stride * 4, h * frame->linesize[0]);
         }
         ANativeWindow_unlockAndPost(window);
     }
-
     av_free(buffer);
     av_frame_free(&frame);
     if (env) {

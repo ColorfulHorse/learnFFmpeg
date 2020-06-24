@@ -292,7 +292,7 @@ int Publisher::encodeFrame(AVFrame *frame) {
             int64_t dts = av_rescale_q_rnd(packet->dts, codecContext->time_base, stream->time_base, AV_ROUND_NEAR_INF);
             packet->pts = pts;
             packet->dts = dts;
-            // 表示当前帧的持续时间， 25帧 1000/25 = 40
+            // 表示当前帧的持续时间，单位为stream time_base，25帧 1000/25 = 40
             packet->duration = (stream->time_base.den) / ((stream->time_base.num) * fps);
             packet->pos = -1;
         }

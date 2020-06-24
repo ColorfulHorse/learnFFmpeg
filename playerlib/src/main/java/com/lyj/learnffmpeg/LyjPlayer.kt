@@ -14,11 +14,9 @@ class LyjPlayer {
         const val NONE_VIDEO_STREAM = ERROR_STREAM + 1
         const val UNKNOW = NONE_VIDEO_STREAM + 1
 
-
         init {
             LibLoader.loadLib("lyjplayer")
         }
-
     }
 
     init {
