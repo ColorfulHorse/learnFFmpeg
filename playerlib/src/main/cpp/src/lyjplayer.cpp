@@ -147,7 +147,6 @@ void LyjPlayer::startPlay(const char *url) {
             }
             av_packet_unref(packet);
         }
-        LOGE("net thread finish");
         vm->DetachCurrentThread();
         // stopPlay();
         return 0;

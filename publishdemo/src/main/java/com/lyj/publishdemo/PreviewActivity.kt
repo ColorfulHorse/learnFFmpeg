@@ -167,7 +167,8 @@ class PreviewActivity : AppCompatActivity() {
                 val rotation = it.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
                 previewDataSize?.let { size ->
                     publisher.startPublish(
-                        "rtmp://149.28.73.52:1935/live/test",
+                        "rtmp://111.231.228.119/live/livestream",
+                        //"rtmp://149.28.73.52:1935/live/test",
                         size.width,
                         size.height,
                         rotation

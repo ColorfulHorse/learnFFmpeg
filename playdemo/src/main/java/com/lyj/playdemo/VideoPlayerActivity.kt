@@ -37,7 +37,7 @@ class VideoPlayerActivity : AppCompatActivity() {
 
         })
         start.setOnClickListener {
-            videoView.startPlay("rtmp://149.28.73.52:1935/live/test")
+            videoView.startPlay("rtmp://111.231.228.119/live/livestream")
             loading.visibility = View.VISIBLE
             tips.visibility = View.GONE
         }

@@ -127,6 +127,9 @@ int Publisher::initPublish(JNIEnv *env) {
     codecContext->time_base = AVRational{1, fps};
     codecContext->framerate = AVRational{fps, 1};
     // codecContext->thread_count = 4;
+    if (formatContext->oformat->flags & AVFMT_GLOBALHEADER) {
+        codecContext->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+    }
     if (codecContext->codec_id == AV_CODEC_ID_H264) {
         // 编码速度和质量的平衡
         // "ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo"
@@ -309,7 +312,7 @@ int Publisher::encodeFrame(AVFrame *frame) {
         int time = chrono::duration_cast<chrono::microseconds>(end - start).count();
         LOGE("send time: %d microseconds", time);
         if (code != 0) {
-            LOGE("av_interleaved_write_frame failed");
+            LOGE("av_interleaved_write_frame failed %s", av_err2str(code));
         }
         av_packet_unref(packet);
     }
