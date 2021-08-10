@@ -17,23 +17,23 @@ template<typename T>
 class LinkedBlockingQueue {
 private:
     std::list<T> elements;
-    std::mutex read_mtx, write_mtx;
+    std::mutex poll_mtx, offer_mtx;
     std::condition_variable cond_empty, cond_full;
-    size_t max = static_cast<size_t>(-1);
-    std::atomic_size_t count = {0};
+    size_t max;
+    std::atomic_size_t count;
 public:
-    LinkedBlockingQueue<T>(){
+    LinkedBlockingQueue<T>() : max(-1), count(0) {
 
     };
 
-    LinkedBlockingQueue<T>(const size_t size) : max(size){
+    LinkedBlockingQueue<T>(const size_t size) : max(size), count(0) {
 
     };
 
-    T pop() {
+    T poll() {
         T e;
         {
-            std::unique_lock<std::mutex> lock(read_mtx);
+            std::unique_lock<std::mutex> lock(poll_mtx);
             cond_empty.wait(lock, [this] { return !empty(); });
             e = elements.front();
             elements.pop_front();
@@ -43,10 +43,11 @@ public:
         return e;
     };
 
-    void push(T data) {
+    void offer(T data) {
         {
-            std::unique_lock<std::mutex> lock(write_mtx);
+            std::unique_lock<std::mutex> lock(offer_mtx);
             if (max > 0) {
+                // predicate false阻塞
                 cond_full.wait(lock, [this] { return count.load() < max; });
             }
             elements.emplace_back(std::move(data));
@@ -64,8 +65,8 @@ public:
     };
 
     void clear() {
-        std::lock_guard<std::mutex> lck(read_mtx);
-        std::lock_guard<std::mutex> lock(write_mtx);
+        std::lock_guard<std::mutex> lck(poll_mtx);
+        std::lock_guard<std::mutex> lock(offer_mtx);
         std::list<T> empty;
         elements.swap(empty);
         count = 0;

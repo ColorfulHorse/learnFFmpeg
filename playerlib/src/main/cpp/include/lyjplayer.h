@@ -37,7 +37,7 @@ private:
     const char *url;
     int width = 0;
     int height = 0;
-    atomic_bool playing = {false};
+    atomic_bool playing;
     // AVFormatContext用于解封装 flv,avi,rmvb,mp4
     AVFormatContext *formatContext = nullptr;
     AVCodecContext *codecContext = nullptr;
@@ -49,7 +49,7 @@ private:
     ANativeWindow_Buffer windowBuffer;
     thread task;
     // 记录帧编号
-    int index;
+    size_t index = 0;
     // 网络接收的缓冲
     LinkedBlockingQueue<FrameData> queue;
     Timer timer;
@@ -70,7 +70,7 @@ public:
 
     LyjPlayer();
 
-    int init();
+    int init() const;
 
     void startPlay(const char *url);
 

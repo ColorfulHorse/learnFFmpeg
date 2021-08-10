@@ -7,7 +7,7 @@
 #include <android/native_window_jni.h>
 #include <publisher.h>
 #include <logger.h>
-#include <LyjPlayer.h>
+#include <lyjplayer.h>
 #include <map>
 
 template<class T>
@@ -114,11 +114,11 @@ map<string, LyjPlayer *> player_map;
  * @param obj
  * @return
  */
-const string getKey(JNIEnv *env, jobject obj) {
+const char* getKey(JNIEnv *env, jobject obj) {
     jclass cls = env->GetObjectClass(obj);
     jmethodID mid = env->GetMethodID(cls, "toString", "()Ljava/lang/String;");
     jstring jstr = static_cast<jstring>(env->CallObjectMethod(obj, mid, nullptr));
-    return string(env->GetStringUTFChars(jstr, nullptr));
+    return env->GetStringUTFChars(jstr, nullptr);
 }
 
 void player_init_play(JNIEnv *env, jobject obj) {

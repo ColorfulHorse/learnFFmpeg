@@ -63,7 +63,7 @@ void Publisher::encodeRun() {
     if (ret == 0) {
         while (running.load()) {
             unsigned char *buffer = nullptr;
-            buffer = dataPool.pop();
+            buffer = dataPool.poll();
             if (buffer) {
                 int32_t ysize = width * height;
                 int32_t usize = (width / 2) * (height / 2);
@@ -254,7 +254,7 @@ int Publisher::pushData(unsigned char *buffer) {
         if (dataPool.size() >= 200) {
             dataPool.clear();
         }
-        dataPool.push(buffer);
+        dataPool.offer(buffer);
     }
     return 0;
 }

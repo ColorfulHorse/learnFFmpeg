@@ -1,7 +1,7 @@
 //
 // Created by hunny on 2020/5/25.
 //
-#include <LyjPlayer.h>
+#include <lyjplayer.h>
 #include <logger.h>
 
 #ifdef __cplusplus
@@ -15,14 +15,14 @@ extern "C" {
 #endif
 
 
-LyjPlayer::LyjPlayer() = default;
-
-LyjPlayer::~LyjPlayer() {
+LyjPlayer::LyjPlayer(): playing(false) {
 
 }
 
-int LyjPlayer::init() {
-    av_jni_set_java_vm(vm, 0);
+LyjPlayer::~LyjPlayer() = default;
+
+int LyjPlayer::init() const {
+    av_jni_set_java_vm(vm, nullptr);
     return 0;
 }
 
@@ -185,7 +185,7 @@ int LyjPlayer::decodeFrame() {
         sws_scale(sws_context, temp->data, temp->linesize, 0, codecContext->height,
                   frame->data, frame->linesize);
         FrameData frameData = {frame, buffer};
-        queue.push(frameData);
+        queue.offer(frameData);
     }
     return ret;
 }
@@ -194,7 +194,7 @@ int LyjPlayer::decodeFrame() {
 int LyjPlayer::render() {
     int ret = 0;
     JNIEnv *env = nullptr;
-    FrameData frameData = queue.pop();
+    FrameData frameData = queue.poll();
     AVFrame *frame = frameData.frame;
     uint8_t *buffer = frameData.buffer;
     // 开始绘制第一帧回调
